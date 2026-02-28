@@ -14,6 +14,7 @@ export const CreateTab = ({ playHTCred, setPlayHTCred }) => {
     type: "album",
     assets: [],
     memorableMoments: "",
+    location: "",
   });
 
   if (stage === 0) {

@@ -4,11 +4,88 @@ import { editor } from "express-document-sdk";
 // Get the document sandbox runtime.
 const { runtime } = addOnSandboxSdk.instance;
 
-function start() {
-    // APIs to be exposed to the UI runtime
-    // i.e., to the `index.html` file of this add-on.
+async function createPageImpl(base64Image, narrative, mimeType, sceneType) {
+    const insertionParent = editor.context.insertionParent;
+    const safeMime = mimeType && String(mimeType).startsWith("image/") ? mimeType : "image/png";
+    const isImage = sceneType !== "VIDEO";
+    const width = 400;
+    const height = 300;
+
+    try {
+        if (isImage && base64Image) {
+            const isUrl = typeof base64Image === "string" && base64Image.startsWith("http");
+            const res = await fetch(isUrl ? base64Image : `data:${safeMime};base64,${base64Image}`);
+            const blob = await res.blob();
+            const bitmapImage = await editor.loadBitmapImage(blob);
+            // Edits after async must run inside queueAsyncEdit (per Adobe document sandbox sample)
+            await editor.queueAsyncEdit(() => {
+                const mediaContainerNode = editor.createImageContainer(bitmapImage, {
+                    initialSize: { width, height }
+                });
+                mediaContainerNode.translation = { x: 50, y: 50 };
+                insertionParent.children.append(mediaContainerNode);
+
+                const text = editor.createText();
+                text.text = narrative || "";
+                text.translation = { x: 50, y: 50 + height + 20 };
+                if (text.styles) {
+                    try {
+                        text.styles.fill = editor.makeColorFill({ red: 0, green: 0, blue: 0, alpha: 1 });
+                    } catch (_) {}
+                }
+                insertionParent.children.append(text);
+            });
+            return;
+        }
+
+        if (!isImage) {
+            const placeholder = editor.createText();
+            placeholder.text = "[Video]\n\n" + (narrative || "");
+            placeholder.translation = { x: 50, y: 50 };
+            if (placeholder.styles) {
+                try {
+                    placeholder.styles.fill = editor.makeColorFill({ red: 0.2, green: 0.2, blue: 0.2, alpha: 1 });
+                } catch (_) {}
+            }
+            insertionParent.children.append(placeholder);
+            return;
+        }
+
+        // Image type but no image data: add narrative only
+        const text = editor.createText();
+        text.text = narrative || "";
+        text.translation = { x: 50, y: 50 };
+        if (text.styles) {
+            try {
+                text.styles.fill = editor.makeColorFill({ red: 0, green: 0, blue: 0, alpha: 1 });
+            } catch (_) {}
+        }
+        insertionParent.children.append(text);
+    } catch (e) {
+        console.error("Error in createPage:", e);
+        await editor.queueAsyncEdit(() => {
+            const insertionParent2 = editor.context.insertionParent;
+            const text = editor.createText();
+            text.text = "Error adding content: " + (e.message || e) + "\n\n" + (narrative || "");
+            text.translation = { x: 50, y: 50 };
+            if (text.styles) {
+                try {
+                    text.styles.fill = editor.makeColorFill({ red: 0.5, green: 0, blue: 0, alpha: 1 });
+                } catch (_) {}
+            }
+            insertionParent2.children.append(text);
+        });
+    }
+}
+
+async function start() {
     const sandboxApi = {
-        createRectangle: () => {
+        addPage: function (size = { width: 400, height: 600 }) {
+            if (editor.documentRoot && editor.documentRoot.pages && editor.documentRoot.pages.addPage) {
+                editor.documentRoot.pages.addPage(size);
+            }
+        },
+        createRectangle: function () {
             const rectangle = editor.createRectangle();
             rectangle.width = 240;
             rectangle.height = 180;
@@ -19,49 +96,24 @@ function start() {
             const insertionParent = editor.context.insertionParent;
             insertionParent.children.append(rectangle);
         },
-        createPage: async (base64Image, narrative) => {
-            try {
-                const insertionParent = editor.context.insertionParent;
-
-                // Create Image
-                // Convert base64 to blob
-                const res = await fetch(`data:image/png;base64,${base64Image}`);
-                const blob = await res.blob();
-
-                // Try to create image container
-                // Note: API might differ, using best guess based on SDK patterns
-                const bitmap = await editor.createBitmapImage(blob); // Hypothetical API
-                // If createBitmapImage doesn't exist, we might need another way.
-                // But let's assume it works or similar.
-
-                insertionParent.children.append(bitmap);
-                bitmap.translation = { x: 50, y: 50 };
-                bitmap.width = 400;
-                bitmap.height = 300; // Aspect ratio might be wrong
-
-                // Create Text
-                const text = editor.createText();
-                text.text = narrative;
-                text.translation = { x: 50, y: 400 };
-                const color = { red: 0, green: 0, blue: 0, alpha: 1 };
-                text.color = editor.makeColorFill(color); // Assuming makeColorFill works for text color too
-
-                insertionParent.children.append(text);
-
-            } catch (e) {
-                console.error("Error in createPage:", e);
-                // Fallback: Create a rectangle with text if image fails
-                const text = editor.createText();
-                text.text = "Error adding image: " + e.message + "\n" + narrative;
-                text.translation = { x: 50, y: 50 };
-                const insertionParent = editor.context.insertionParent;
-                insertionParent.children.append(text);
+        invoke: function (methodName, base64Image, narrative, mimeType, sceneType) {
+            if (methodName === "createPage") {
+                return createPageImpl(
+                    base64Image,
+                    narrative,
+                    mimeType,
+                    sceneType
+                );
             }
+            return Promise.resolve();
         }
     };
 
-    // Expose `sandboxApi` to the UI runtime.
     runtime.exposeApi(sandboxApi);
 }
 
-start();
+start().then(() => {
+    console.log("Sandbox: API exposed.");
+}).catch((e) => {
+    console.error("Failed to start sandbox:", e);
+});

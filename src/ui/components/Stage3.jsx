@@ -8,17 +8,65 @@ export const Stage3 = ({ setStage, payload, setPayload, script, setScript, playH
   useEffect(() => {
     const generate = async () => {
       try {
-        // Prepare payload
-        const body = {
-          ...payload,
-          annotations: annotations || [],
-          playHTCred
+        // Only send assets that have buffers; keep order so server indices match
+        const assetsToSend = (payload.assets || []).filter((a) => a && a.buffer);
+        if (assetsToSend.length === 0) {
+          setError("No media to upload. Please add at least one image or video.");
+          return;
+        }
+
+        const assetMetadata = assetsToSend.map((asset) => ({
+          type: asset.type || "IMAGE",
+          mimeType: asset.mimeType || "image/jpeg",
+          location: asset.location || "",
+          creation_time: asset.creation_time || new Date().toISOString()
+        }));
+
+        const annotationPayload = (annotations || []).map((a, index) => ({
+          name: (a && a.annotation) || `Person ${index + 1}`,
+          relation: "",
+          faceIndex: index
+        }));
+
+        const payloadForServer = {
+          type: payload.type || "album",
+          memorableMoments: payload.memorableMoments || "",
+          location: payload.location || "",
+          assetMetadata,
+          annotations: Array.isArray(annotationPayload) ? annotationPayload : [],
+          playHTCred: playHTCred || null
         };
+
+        const formData = new FormData();
+        formData.append("payload", JSON.stringify(payloadForServer));
+
+        const base64ToBlob = (base64, mimeType) => {
+          const byteChars = atob(base64);
+          const byteNumbers = new Array(byteChars.length);
+          for (let i = 0; i < byteChars.length; i++) {
+            byteNumbers[i] = byteChars.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          return new Blob([byteArray], { type: mimeType });
+        };
+
+        // Append media assets in same order as assetMetadata
+        assetsToSend.forEach((asset, index) => {
+          const mimeType = asset.mimeType || "application/octet-stream";
+          const blob = base64ToBlob(asset.buffer, mimeType);
+          formData.append("assets", blob, `asset-${index}`);
+        });
+
+        // Append extracted face images for annotations in the "annotationFaces" field
+        (annotations || []).forEach((a, index) => {
+          if (!a.buffer) return;
+          const blob = base64ToBlob(a.buffer, "image/jpeg");
+          formData.append("annotationFaces", blob, `face-${index}.jpg`);
+        });
 
         const res = await fetch(`${BACKEND_HOST}/create`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
+          body: formData
         });
 
         if (!res.ok) {

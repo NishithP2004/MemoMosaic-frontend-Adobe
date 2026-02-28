@@ -6,4 +6,12 @@ import "@spectrum-web-components/styles/theme-light.css";
 
 const rootElement = document.getElementById("root");
 const root = createRoot(rootElement);
-root.render(<App />);
+
+const init = async () => {
+    if (window.addOnUISdk) {
+        await window.addOnUISdk.ready;
+    }
+    root.render(<App />);
+};
+
+init();
