@@ -22,6 +22,43 @@ module.exports = {
         module: true,
         filename: "[name].js"
     },
+    devServer: {
+        setupMiddlewares: (middlewares, devServer) => {
+            if (!devServer.app) {
+                return middlewares;
+            }
+
+            devServer.app.get("/asset-proxy", async (req, res) => {
+                try {
+                    const target = new URL(String(req.query.url || ""));
+                    if (target.protocol !== "https:" && target.protocol !== "http:") {
+                        res.status(400).send("Unsupported asset URL.");
+                        return;
+                    }
+
+                    if (target.hostname === "tmpfiles.org" && !target.pathname.startsWith("/dl/")) {
+                        target.pathname = `/dl${target.pathname}`;
+                    }
+
+                    const upstream = await fetch(target.toString());
+                    if (!upstream.ok) {
+                        res.status(upstream.status).send(`Asset fetch failed: ${upstream.statusText}`);
+                        return;
+                    }
+
+                    const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+                    res.setHeader("Access-Control-Allow-Origin", "*");
+                    res.setHeader("Cache-Control", "no-store");
+                    res.setHeader("Content-Type", contentType);
+                    res.send(Buffer.from(await upstream.arrayBuffer()));
+                } catch (error) {
+                    res.status(500).send(error?.message || "Asset proxy failed.");
+                }
+            });
+
+            return middlewares;
+        }
+    },
     externalsType: "module",
     externalsPresets: { web: true },
     externals: {
